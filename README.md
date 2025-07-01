@@ -1,15 +1,16 @@
-# Simple FastMCP Server
+# Simple MCP Server
 
-A simple FastMCP (Model Context Protocol) server running on Cloudflare Workers. This server demonstrates how to build stateful MCP servers with multiple tools and resources.
+A Model Context Protocol (MCP) server running on Cloudflare Workers using the official TypeScript SDK. This server demonstrates how to build MCP servers with tools and resources.
 
 ## Features
 
-- ✅ **Stateful operations** with persistent counter and message storage
-- ✅ **Multiple transport methods** (SSE + Streamable HTTP)
+- ✅ **Official MCP TypeScript SDK** implementation
 - ✅ **5 interactive tools** for demonstration
 - ✅ **2 resources** for data access
+- ✅ **Stateful operations** with in-memory storage
 - ✅ **Global deployment** on Cloudflare's edge network
 - ✅ **TypeScript** support with full type safety
+- ✅ **HTTP-based MCP transport** for web compatibility
 
 ## Tools Available
 
@@ -63,31 +64,50 @@ npm run dev
 # Run type checking
 npm run typecheck
 
-# Run tests
-npm run test
+# Build TypeScript
+npm run build
 ```
 
 ## MCP Client Connection
 
-### SSE Transport (Legacy)
-```
-https://your-worker.your-subdomain.workers.dev/sse
-```
-
-### Streamable HTTP Transport (Preferred)
+### HTTP Transport
 ```
 https://your-worker.your-subdomain.workers.dev/mcp
 ```
 
 ## Usage Examples
 
-Once connected via an MCP client (like Claude Desktop, Cursor, etc.):
+Connect via an MCP client and test the tools:
 
+### Example MCP Tool Call:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "add_to_counter",
+    "arguments": {
+      "amount": 5
+    }
+  }
+}
 ```
-Human: Add 5 to the counter
-AI: I'll add 5 to the counter for you.
-[Uses add_to_counter tool]
-Successfully added 5 to counter. New value: 5
+
+### Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Successfully added 5 to counter. New value: 5"
+      }
+    ]
+  }
+}
 ```
 
 ## Project Structure
@@ -99,6 +119,43 @@ Successfully added 5 to counter. New value: 5
 ├── wrangler.toml         # Cloudflare Workers configuration
 ├── tsconfig.json         # TypeScript configuration
 └── README.md            # This file
+```
+
+## Architecture
+
+This server uses:
+- **Official MCP TypeScript SDK** (`@modelcontextprotocol/sdk`)
+- **HTTP-based transport** for web compatibility
+- **In-memory state** (can be upgraded to KV/D1/Durable Objects)
+- **JSON-RPC 2.0** protocol implementation
+- **Cloudflare Workers** runtime for global deployment
+
+## Extending the Server
+
+To add new tools:
+```typescript
+server.registerTool(
+  "your_tool_name",
+  {
+    title: "Your Tool",
+    description: "What your tool does",
+    inputSchema: {
+      type: "object",
+      properties: {
+        param: { type: "string" }
+      },
+      required: ["param"]
+    }
+  },
+  async ({ param }) => {
+    // Your tool logic here
+    return {
+      content: [
+        { type: "text", text: `Result: ${param}` }
+      ]
+    };
+  }
+);
 ```
 
 ## License

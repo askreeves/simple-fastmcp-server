@@ -1,32 +1,32 @@
 {
   "name": "simple-fastmcp-server",
   "version": "1.0.0",
-  "description": "A simple FastMCP server running on Cloudflare Workers",
+  "description": "A simple MCP server running on Cloudflare Workers using the TypeScript SDK",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "agents": "^0.0.95",
+    "@modelcontextprotocol/sdk": "^1.13.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.3",
-    "wrangler": "^3.95.0"
+    "wrangler": "^4.22.0"
   },
   "keywords": [
     "mcp",
-    "fastmcp",
+    "model-context-protocol",
     "cloudflare",
     "workers",
     "ai",
-    "agent"
+    "typescript"
   ],
   "author": "Your Name",
   "license": "MIT"

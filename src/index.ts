@@ -1,242 +1,385 @@
-import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-// Define the state type for our MCP server
-type State = { 
-  counter: number;
-  messages: string[];
+// State management using a simple in-memory store
+// In production, you'd use Cloudflare KV, D1, or Durable Objects
+let globalState = {
+  counter: 0,
+  messages: [] as string[],
 };
 
 /**
- * Simple FastMCP Server Example
+ * Simple MCP Server Example using the official TypeScript SDK
  * 
  * This server demonstrates:
- * - Basic tool creation
- * - Stateful operations
- * - Resource management
- * - Multiple transport support (SSE + Streamable HTTP)
+ * - Tool creation with the official MCP TypeScript SDK
+ * - State management (using in-memory storage for simplicity)
+ * - Multiple transport support via Cloudflare Workers
+ * - Proper MCP protocol implementation
  */
-export class SimpleFastMCP extends McpAgent<{}, State, {}> {
-  server = new McpServer({
-    name: "Simple FastMCP Server",
-    version: "1.0.0",
-  });
 
-  // Initial state for the server
-  initialState: State = {
-    counter: 0,
-    messages: [],
-  };
+// Create MCP server instance
+const server = new McpServer({
+  name: "Simple MCP Server",
+  version: "1.0.0",
+});
 
-  async init() {
-    // Define a resource that shows the current counter value
-    this.server.resource(
-      "counter",
-      "mcp://resource/counter",
-      "Current counter value",
-      (uri) => {
-        return {
-          contents: [
-            {
-              uri: uri.href,
-              text: `Current counter value: ${this.state.counter}`,
-              mimeType: "text/plain"
-            }
-          ],
-        };
-      }
-    );
-
-    // Define a resource that shows message history
-    this.server.resource(
-      "messages",
-      "mcp://resource/messages",
-      "Message history",
-      (uri) => {
-        return {
-          contents: [
-            {
-              uri: uri.href,
-              text: this.state.messages.join("\n"),
-              mimeType: "text/plain"
-            }
-          ],
-        };
-      }
-    );
-
-    // Tool: Add to counter
-    this.server.tool(
-      "add_to_counter",
-      "Add a number to the counter",
-      {
-        amount: z.number().describe("The number to add to the counter")
+// Register tools with the server
+server.registerTool(
+  "add_to_counter",
+  {
+    title: "Add to Counter",
+    description: "Add a number to the persistent counter",
+    inputSchema: {
+      type: "object",
+      properties: {
+        amount: {
+          type: "number",
+          description: "The number to add to the counter"
+        }
       },
-      async ({ amount }) => {
-        const oldValue = this.state.counter;
-        const newValue = oldValue + amount;
-        
-        this.setState({
-          ...this.state,
-          counter: newValue,
-          messages: [...this.state.messages, `Added ${amount}: ${oldValue} → ${newValue}`]
-        });
+      required: ["amount"]
+    }
+  },
+  async ({ amount }) => {
+    const oldValue = globalState.counter;
+    const newValue = oldValue + amount;
+    globalState.counter = newValue;
+    
+    const message = `Added ${amount}: ${oldValue} → ${newValue}`;
+    globalState.messages.push(message);
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Successfully added ${amount} to counter. New value: ${newValue}`
-            }
-          ],
-        };
-      }
-    );
-
-    // Tool: Reset counter
-    this.server.tool(
-      "reset_counter",
-      "Reset the counter to zero",
-      {},
-      async () => {
-        this.setState({
-          ...this.state,
-          counter: 0,
-          messages: [...this.state.messages, "Counter reset to 0"]
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Counter has been reset to 0"
-            }
-          ],
-        };
-      }
-    );
-
-    // Tool: Get current time
-    this.server.tool(
-      "get_time",
-      "Get the current server time",
-      {},
-      async () => {
-        const now = new Date().toISOString();
-        
-        this.setState({
-          ...this.state,
-          messages: [...this.state.messages, `Time requested: ${now}`]
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Current server time: ${now}`
-            }
-          ],
-        };
-      }
-    );
-
-    // Tool: Send message
-    this.server.tool(
-      "send_message",
-      "Send a message to be stored in the server",
-      {
-        message: z.string().describe("The message to store")
-      },
-      async ({ message }) => {
-        const timestamp = new Date().toISOString();
-        const messageWithTime = `[${timestamp}] ${message}`;
-        
-        this.setState({
-          ...this.state,
-          messages: [...this.state.messages, messageWithTime]
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Message stored: ${messageWithTime}`
-            }
-          ],
-        };
-      }
-    );
-
-    // Tool: Get message count
-    this.server.tool(
-      "get_message_count",
-      "Get the total number of messages stored",
-      {},
-      async () => {
-        const count = this.state.messages.length;
-        
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Total messages stored: ${count}`
-            }
-          ],
-        };
-      }
-    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Successfully added ${amount} to counter. New value: ${newValue}`
+        }
+      ]
+    };
   }
+);
 
-  // Called whenever state is updated
-  onStateUpdate(state: State) {
-    console.log("State updated:", { 
-      counter: state.counter, 
-      messageCount: state.messages.length 
-    });
+server.registerTool(
+  "reset_counter",
+  {
+    title: "Reset Counter",
+    description: "Reset the counter to zero",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  async () => {
+    globalState.counter = 0;
+    globalState.messages.push("Counter reset to 0");
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Counter has been reset to 0"
+        }
+      ]
+    };
+  }
+);
+
+server.registerTool(
+  "get_time",
+  {
+    title: "Get Current Time",
+    description: "Get the current server time",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  async () => {
+    const now = new Date().toISOString();
+    globalState.messages.push(`Time requested: ${now}`);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Current server time: ${now}`
+        }
+      ]
+    };
+  }
+);
+
+server.registerTool(
+  "send_message",
+  {
+    title: "Send Message",
+    description: "Send a message to be stored on the server",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "The message to store"
+        }
+      },
+      required: ["message"]
+    }
+  },
+  async ({ message }) => {
+    const timestamp = new Date().toISOString();
+    const messageWithTime = `[${timestamp}] ${message}`;
+    globalState.messages.push(messageWithTime);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Message stored: ${messageWithTime}`
+        }
+      ]
+    };
+  }
+);
+
+server.registerTool(
+  "get_message_count",
+  {
+    title: "Get Message Count",
+    description: "Get the total number of messages stored",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  async () => {
+    const count = globalState.messages.length;
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Total messages stored: ${count}`
+        }
+      ]
+    };
+  }
+);
+
+// Register resources
+server.registerResource(
+  "counter",
+  {
+    title: "Counter Value",
+    description: "Current counter value",
+    uri: "mcp://resource/counter",
+    mimeType: "text/plain"
+  },
+  async () => {
+    return {
+      contents: [
+        {
+          uri: "mcp://resource/counter",
+          text: `Current counter value: ${globalState.counter}`,
+          mimeType: "text/plain"
+        }
+      ]
+    };
+  }
+);
+
+server.registerResource(
+  "messages",
+  {
+    title: "Message History",
+    description: "All stored messages",
+    uri: "mcp://resource/messages",
+    mimeType: "text/plain"
+  },
+  async () => {
+    return {
+      contents: [
+        {
+          uri: "mcp://resource/messages",
+          text: globalState.messages.join("\\n"),
+          mimeType: "text/plain"
+        }
+      ]
+    };
+  }
+);
+
+// Simple HTTP-based MCP transport for Cloudflare Workers
+class WorkerMCPTransport {
+  constructor(private server: McpServer) {}
+
+  async handleRequest(request: Request): Promise<Response> {
+    if (request.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+
+    try {
+      const body = await request.json() as any;
+      
+      // Handle MCP protocol messages
+      switch (body.method) {
+        case 'initialize':
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              protocolVersion: "2024-11-05",
+              capabilities: {
+                tools: {},
+                resources: {}
+              },
+              serverInfo: {
+                name: "Simple MCP Server",
+                version: "1.0.0"
+              }
+            }
+          });
+
+        case 'tools/list':
+          const tools = Array.from((this.server as any)._tools.keys()).map(name => {
+            const tool = (this.server as any)._tools.get(name);
+            return {
+              name,
+              description: tool.metadata.description,
+              inputSchema: tool.metadata.inputSchema
+            };
+          });
+          
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { tools }
+          });
+
+        case 'tools/call':
+          const toolName = body.params.name;
+          const args = body.params.arguments || {};
+          
+          try {
+            const result = await (this.server as any)._callTool(toolName, args);
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result
+            });
+          } catch (error) {
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              error: {
+                code: -32603,
+                message: `Tool execution failed: ${error}`
+              }
+            });
+          }
+
+        case 'resources/list':
+          const resources = Array.from((this.server as any)._resources.keys()).map(name => {
+            const resource = (this.server as any)._resources.get(name);
+            return {
+              name,
+              description: resource.metadata.description,
+              uri: resource.metadata.uri,
+              mimeType: resource.metadata.mimeType
+            };
+          });
+          
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { resources }
+          });
+
+        case 'resources/read':
+          const resourceUri = body.params.uri;
+          // Simple resource lookup by URI
+          const resourceName = resourceUri.split('/').pop();
+          
+          try {
+            const result = await (this.server as any)._readResource(resourceName, resourceUri);
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result
+            });
+          } catch (error) {
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              error: {
+                code: -32603,
+                message: `Resource read failed: ${error}`
+              }
+            });
+          }
+
+        default:
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: {
+              code: -32601,
+              message: `Method not found: ${body.method}`
+            }
+          });
+      }
+    } catch (error) {
+      return Response.json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32700,
+          message: "Parse error"
+        }
+      });
+    }
   }
 }
 
-// Worker fetch handler - supports both SSE and Streamable HTTP
+// Create transport instance
+const transport = new WorkerMCPTransport(server);
+
+// Cloudflare Workers fetch handler
 export default {
-  fetch(request: Request, env: {}, ctx: ExecutionContext): Response | Promise<Response> {
+  async fetch(request: Request, env: {}, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
     
-    // Handle SSE transport (legacy, but still widely supported)
-    if (pathname.startsWith('/sse')) {
-      return SimpleFastMCP.serveSSE('/sse').fetch(request, env, ctx);
-    }
-    
-    // Handle Streamable HTTP transport (newer, preferred)
-    if (pathname.startsWith('/mcp')) {
-      return SimpleFastMCP.serve('/mcp').fetch(request, env, ctx);
+    // Handle MCP protocol requests
+    if (pathname === '/mcp') {
+      return transport.handleRequest(request);
     }
     
     // Health check endpoint
     if (pathname === '/health') {
-      return new Response(JSON.stringify({
+      return Response.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        transport: {
-          sse: '/sse',
-          streamable_http: '/mcp'
+        server: 'Simple MCP Server',
+        version: '1.0.0',
+        state: {
+          counter: globalState.counter,
+          messageCount: globalState.messages.length
         }
-      }), {
-        headers: { 'Content-Type': 'application/json' }
       });
     }
     
     // Root endpoint with info
     if (pathname === '/') {
       return new Response(`
-# Simple FastMCP Server
+# Simple MCP Server
 
-This is a simple FastMCP server running on Cloudflare Workers.
+This is a Model Context Protocol server running on Cloudflare Workers.
 
 ## Endpoints
 
-- \`/sse\` - Server-Sent Events transport
-- \`/mcp\` - Streamable HTTP transport  
+- \`/mcp\` - MCP protocol endpoint
 - \`/health\` - Health check
 
 ## Tools Available
@@ -254,7 +397,12 @@ This is a simple FastMCP server running on Cloudflare Workers.
 
 ## Usage
 
-Connect your MCP client to one of the transport endpoints above.
+Connect your MCP client to the \`/mcp\` endpoint.
+
+## Current State
+
+- Counter: ${globalState.counter}
+- Messages: ${globalState.messages.length}
       `, {
         headers: { 'Content-Type': 'text/plain' }
       });
