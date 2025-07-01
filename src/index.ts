@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 // State management using a simple in-memory store
@@ -14,8 +15,8 @@ let globalState = {
  * This server demonstrates:
  * - Tool creation with the official MCP TypeScript SDK
  * - State management (using in-memory storage for simplicity)
- * - Multiple transport support via Cloudflare Workers
  * - Proper MCP protocol implementation
+ * - Working with Cloudflare Workers via HTTP transport
  */
 
 // Create MCP server instance
@@ -212,11 +213,34 @@ server.registerResource(
   }
 );
 
-// Simple HTTP-based MCP transport for Cloudflare Workers
-class WorkerMCPTransport {
-  constructor(private server: McpServer) {}
+// Cloudflare Workers Streamable HTTP Transport Implementation
+class CloudflareWorkerTransport {
+  private server: McpServer;
+  private isConnected = false;
 
-  async handleRequest(request: Request): Promise<Response> {
+  constructor(server: McpServer) {
+    this.server = server;
+  }
+
+  async connect() {
+    if (this.isConnected) return;
+    
+    // Set up event handlers for the MCP server
+    this.server.onRequest = async (request, extra) => {
+      // Handle incoming MCP requests
+      console.log("Received MCP request:", request.method);
+      return this.server.handleRequest(request);
+    };
+
+    this.isConnected = true;
+    console.log("MCP Server connected via Cloudflare Worker Transport");
+  }
+
+  async handleHttpRequest(request: Request): Promise<Response> {
+    if (!this.isConnected) {
+      await this.connect();
+    }
+
     if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405 });
     }
@@ -224,119 +248,34 @@ class WorkerMCPTransport {
     try {
       const body = await request.json() as any;
       
-      // Handle MCP protocol messages
-      switch (body.method) {
-        case 'initialize':
-          return Response.json({
-            jsonrpc: "2.0",
-            id: body.id,
-            result: {
-              protocolVersion: "2024-11-05",
-              capabilities: {
-                tools: {},
-                resources: {}
-              },
-              serverInfo: {
-                name: "Simple MCP Server",
-                version: "1.0.0"
-              }
-            }
-          });
-
-        case 'tools/list':
-          const tools = Array.from((this.server as any)._tools.keys()).map(name => {
-            const tool = (this.server as any)._tools.get(name);
-            return {
-              name,
-              description: tool.metadata.description,
-              inputSchema: tool.metadata.inputSchema
-            };
-          });
-          
-          return Response.json({
-            jsonrpc: "2.0",
-            id: body.id,
-            result: { tools }
-          });
-
-        case 'tools/call':
-          const toolName = body.params.name;
-          const args = body.params.arguments || {};
-          
-          try {
-            const result = await (this.server as any)._callTool(toolName, args);
-            return Response.json({
-              jsonrpc: "2.0",
-              id: body.id,
-              result
-            });
-          } catch (error) {
-            return Response.json({
-              jsonrpc: "2.0",
-              id: body.id,
-              error: {
-                code: -32603,
-                message: `Tool execution failed: ${error}`
-              }
-            });
-          }
-
-        case 'resources/list':
-          const resources = Array.from((this.server as any)._resources.keys()).map(name => {
-            const resource = (this.server as any)._resources.get(name);
-            return {
-              name,
-              description: resource.metadata.description,
-              uri: resource.metadata.uri,
-              mimeType: resource.metadata.mimeType
-            };
-          });
-          
-          return Response.json({
-            jsonrpc: "2.0",
-            id: body.id,
-            result: { resources }
-          });
-
-        case 'resources/read':
-          const resourceUri = body.params.uri;
-          // Simple resource lookup by URI
-          const resourceName = resourceUri.split('/').pop();
-          
-          try {
-            const result = await (this.server as any)._readResource(resourceName, resourceUri);
-            return Response.json({
-              jsonrpc: "2.0",
-              id: body.id,
-              result
-            });
-          } catch (error) {
-            return Response.json({
-              jsonrpc: "2.0",
-              id: body.id,
-              error: {
-                code: -32603,
-                message: `Resource read failed: ${error}`
-              }
-            });
-          }
-
-        default:
-          return Response.json({
-            jsonrpc: "2.0",
-            id: body.id,
-            error: {
-              code: -32601,
-              message: `Method not found: ${body.method}`
-            }
-          });
-      }
+      console.log("Processing MCP request:", body.method);
+      
+      // Use the server's built-in request handling
+      const response = await this.server.request(body, {});
+      
+      return new Response(JSON.stringify(response), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        }
+      });
+      
     } catch (error) {
-      return Response.json({
+      console.error("Error processing MCP request:", error);
+      
+      return new Response(JSON.stringify({
         jsonrpc: "2.0",
         error: {
-          code: -32700,
-          message: "Parse error"
+          code: -32603,
+          message: `Internal error: ${error}`
+        }
+      }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
         }
       });
     }
@@ -344,16 +283,46 @@ class WorkerMCPTransport {
 }
 
 // Create transport instance
-const transport = new WorkerMCPTransport(server);
+const transport = new CloudflareWorkerTransport(server);
+
+// Initialize the server
+async function initializeServer() {
+  try {
+    await transport.connect();
+    console.log("MCP Server initialized successfully");
+  } catch (error) {
+    console.error("Failed to initialize MCP server:", error);
+  }
+}
+
+// Initialize on first request
+let initialized = false;
 
 // Cloudflare Workers fetch handler
 export default {
   async fetch(request: Request, env: {}, ctx: ExecutionContext): Promise<Response> {
+    // Initialize server on first request
+    if (!initialized) {
+      await initializeServer();
+      initialized = true;
+    }
+
     const { pathname } = new URL(request.url);
+    
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        }
+      });
+    }
     
     // Handle MCP protocol requests
     if (pathname === '/mcp') {
-      return transport.handleRequest(request);
+      return transport.handleHttpRequest(request);
     }
     
     // Health check endpoint
@@ -366,6 +335,10 @@ export default {
         state: {
           counter: globalState.counter,
           messageCount: globalState.messages.length
+        },
+        mcp: {
+          initialized: initialized,
+          connected: true
         }
       });
     }
@@ -379,7 +352,7 @@ This is a Model Context Protocol server running on Cloudflare Workers.
 
 ## Endpoints
 
-- \`/mcp\` - MCP protocol endpoint
+- \`/mcp\` - MCP protocol endpoint (POST)
 - \`/health\` - Health check
 
 ## Tools Available
@@ -397,12 +370,21 @@ This is a Model Context Protocol server running on Cloudflare Workers.
 
 ## Usage
 
-Connect your MCP client to the \`/mcp\` endpoint.
+Connect your MCP client to the \`/mcp\` endpoint using HTTP POST.
 
 ## Current State
 
 - Counter: ${globalState.counter}
 - Messages: ${globalState.messages.length}
+- Server Status: ${initialized ? 'Initialized' : 'Not Initialized'}
+
+## Test MCP Connection
+
+\`\`\`bash
+curl -X POST https://your-worker.workers.dev/mcp \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+\`\`\`
       `, {
         headers: { 'Content-Type': 'text/plain' }
       });
