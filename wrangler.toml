@@ -1,4 +1,4 @@
-name = "simple-mcp-server"
+name = "basicmcptest"
 main = "src/index.ts"
 compatibility_date = "2024-04-03"
 
